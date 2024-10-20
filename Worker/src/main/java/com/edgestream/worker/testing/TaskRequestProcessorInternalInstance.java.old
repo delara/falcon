@@ -1,0 +1,342 @@
+package com.edgestream.worker.testing;
+
+
+import com.edgestream.worker.io.MessageConsumerClient;
+import com.edgestream.worker.operator.Operator;
+import com.edgestream.worker.io.artemis.ActiveMQMessageConsumerClient;
+import com.edgestream.worker.io.artemis.ActiveMQMessageProducerClient;
+import com.edgestream.worker.io.MessageProducerClient;
+import com.edgestream.worker.runtime.task.model.TaskRequestSetupOperator;
+import com.edgestream.worker.runtime.task.TaskRunnerLocal;
+import com.edgestream.worker.runtime.task.model.Task;
+import com.edgestream.worker.runtime.task.TaskDriver;
+import com.edgestream.worker.runtime.topology.Topology;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.client.ClientMessage;
+
+import java.io.*;
+
+
+public class TaskRequestProcessorInternalInstance {
+
+
+    private TaskRunnerLocal taskRunner;
+
+    public TaskRequestProcessorInternalInstance(ClientMessage taskRequestMessage, TaskDriver taskDriver) throws Exception {
+
+
+        //1. extract the details from the message
+        /**
+         * 1. Topology ID
+         * 2. Operator class name
+         * 3. Task created timestamp
+         * 4. Payload - starstream.operator class file or jar file
+         */
+        //get the operator object from the activemq message
+
+        TaskRequestSetupOperator taskRequestSetupOperator = new TaskRequestSetupOperator();
+
+
+        taskRequestSetupOperator.setTopologyID(taskRequestMessage.getStringProperty("Topology"));
+
+        taskRequestSetupOperator.setOperator(this.deserializeOperatorObject(taskRequestMessage));
+        taskRequestSetupOperator.setOperatorID(taskRequestSetupOperator.getOperator().getOperatorID().getOperatorID_as_String()); //this value is preset by the cluster manager so we can get them from the Operator object
+        taskRequestSetupOperator.setOperatorType(taskRequestSetupOperator.getOperator().getInputType()); //this value is preset by the cluster manager so we can get them from the Operator object
+        taskRequestSetupOperator.setOperatorClassName(taskRequestSetupOperator.getOperator().getClass().getCanonicalName());
+
+
+        taskRequestSetupOperator.setTask_id(taskRequestSetupOperator.getOperator().getOperatorID().getOperatorID_as_String()); //TODO: need to have cluster manager generate a unique task ID
+        taskRequestSetupOperator.setTaskRunnerID(taskRequestSetupOperator.getOperator().getOperatorID().getOperatorID_as_String()); //TODO: if we get a unique task ID then we can generate a task runner ID
+        taskRequestSetupOperator.setBroker_ip(taskDriver.getTaskBrokerConfig().getBroker_ip()); //The IP is set by the task manager so we use that, this may change in the future
+
+
+        System.out.println(taskRequestSetupOperator.toString());
+
+
+
+
+
+        /**TEST CONFIG TO BE REMOVED*/
+
+        //String topologyID = "test_tp_1";
+
+        //String producer_client_iD = "ActiveMQ_Producer1";
+        //String consumer_client_iD = "ActiveMQ_Consumer1";
+
+
+        //String operatorID = "TypeA_1";
+        //String operatorType = "A";
+
+        //String task_id = "Task_A_1";
+        //String taskRunnerID = "task_runner_A_1";
+        //String broker_ip = "192.168.0.179";
+
+
+
+
+
+        /******  Task construction begins here  *****************************************************************/
+
+
+
+
+        /**Topology Setup **/
+        //check to see if topology already exists
+        boolean existingTopology = taskDriver.topologyAlreadyExists(taskRequestSetupOperator.getTopologyID());
+
+        Topology topology;
+
+        if (!existingTopology) { //topology does not yet exist, we need to create it. We also need to create a bridge to the parent
+            topology = new Topology(taskRequestSetupOperator.getTopologyID(),taskDriver.getDefaultMetricsAddress());
+            taskDriver.addTopology(topology);
+
+
+
+            taskDriver.getTaskBrokerConfig().addTopologyAddress(topology);//sets up the PrimaryTopologyAddress address for this topology and the NoMatchTopologyAddress
+            taskDriver.getTaskBrokerConfig().setUpTopologyBridge(topology);
+
+
+            taskDriver.printActiveTopologyList();
+
+        }else{
+
+            topology = taskDriver.getTopology(taskRequestSetupOperator.getTopologyID());  //topology already exists, search for it
+
+        }
+
+
+
+        /**Operator Setup
+        /**buildOperator creates the starstream.operator object and its queue write. The consumer that feeds this starstream.operator is created after this step */
+        //Operator operator = buildOperator(newTopology.getPrimaryTopologyAddress(),producer_client_iD,new OperatorID(operatorID), broker_ip,operatorType);
+        Operator operator = this.bindProducerToOperator(topology.getPrimaryTopologyAddress(), taskRequestSetupOperator);
+
+
+        /**Queue Setup
+        /** setupNewOperator() creates the input queues on the broker for this starstream.operator*/
+        String operatorConsumerQueueBinding = taskDriver.getTaskBrokerConfig().setupNewOperatorAndQueue(topology,operator);
+
+        /**Task Setup
+        /** We build the task that contains the starstream.operator*/
+        Task task = this.buildTask(taskRequestSetupOperator.getTask_id(),operator);
+
+
+        /**Consumer Client Setup
+        /** The consumer is asynchronous so it controls when the task->starstream.operator is invoked*/
+        MessageConsumerClient messageConsumerClient = this.buildMessageConsumerClient(taskRequestSetupOperator.getConsumer_client_iD(),operatorConsumerQueueBinding,task, taskRequestSetupOperator.getBroker_ip());
+
+
+        /**Task Runner Setup */
+        this.taskRunner = this.createTaskRunner(taskRequestSetupOperator,messageConsumerClient);
+
+
+        /**All done. Now add the taskRunner to the taskDriver so we can track this taskRunner and manage it later*/
+        taskDriver.addTaskRunner(this.taskRunner);
+
+
+    }
+
+    public void executeTask(){
+
+        this.taskRunner.run();
+    }
+
+
+
+
+
+    /******************************************************************************************************************
+     *  The methods below are helpers to setup the addresses, queues, bridges, consumer and producer clients, etc     *
+     *                                                                                                                *
+     *                                                                                                                *
+     *                                                                                                                *
+     *                                                                                                                *
+     *                                                                                                                *
+     *                                                                                                                *
+     *                                                                                                                *
+     ******************************************************************************************************************/
+
+
+    /**
+     * A helper method to build the TaskRunner
+     * @param consumer
+     * @return
+     */
+    private TaskRunnerLocal createTaskRunner(TaskRequestSetupOperator taskRequestSetupOperator, MessageConsumerClient consumer){
+
+        TaskRunnerLocal taskRunner = new TaskRunnerLocal(taskRequestSetupOperator,consumer);
+        return taskRunner;
+    }
+
+
+
+    /**
+     * A helper method to build the Task
+     * @param taskID
+     * @param operator
+     * @return
+     */
+    private Task buildTask(String taskID, Operator operator){
+
+
+        Task task = new Task(taskID, operator);
+        return task;
+
+    }
+
+
+    /**
+     * A helper method to build the Operator object. This method also creates the MessageProducerClient object that the Operator will use to emit to the Primary Topology Address
+     * @param output_address
+     * @param producer_client_iD
+     * @param operatorID
+     * @return
+
+    @Deprecated
+    private Operator buildOperator(String output_address, String producer_client_iD, OperatorID operatorID, String broker_ip, String inputType) throws Exception {
+
+        MessageProducerClient messageProducerClient =  this.buildMessageProducerClient(output_address,producer_client_iD,broker_ip);
+
+        Operator  operatorToRun =  this.createOperator(messageProducerClient,operatorID,inputType);
+
+
+        return operatorToRun;
+    }
+     */
+
+    /**
+     * When an Operator object is created it does not yet have a MessageProducerClient to send its output to.
+     * This function creates that producer client and sets the reference to that client on the Operator object
+     * @param output_address
+     * @param request
+     * @return
+     * @throws Exception
+     */
+    private Operator bindProducerToOperator(String output_address, TaskRequestSetupOperator request) throws Exception {
+
+
+        MessageProducerClient messageProducerClient =  this.buildMessageProducerClient(output_address,request.getProducer_client_iD(),request.getBroker_ip());
+
+        Operator operatorToRun =  request.getOperator();
+
+        operatorToRun.setActiveMessageProducerClient(messageProducerClient);
+
+
+        return operatorToRun;
+    }
+
+
+
+
+    /**
+     * A helper method to build the Producer client TODO: implement null and zero parameters
+     * @param output_FFQN
+     * @param producer_client_iD
+     * @return
+     */
+    private MessageProducerClient buildMessageProducerClient(String output_FFQN, String producer_client_iD, String broker_ip) throws Exception {
+
+
+        MessageProducerClient messageProducerClient = new ActiveMQMessageProducerClient(producer_client_iD,output_FFQN,broker_ip, null,0,0,null);
+        return messageProducerClient;
+
+    }
+
+
+    /**
+     * A helper method to build the Consumer client TODO: implement null and zero parameters
+     * @param consumer_client_iD
+     * @param input_FFQN
+     * @param taskToRun
+     * @return
+     * @throws Exception
+     */
+    private MessageConsumerClient buildMessageConsumerClient(String consumer_client_iD, String input_FFQN, Task taskToRun, String broker_ip) throws Exception {
+
+        MessageConsumerClient messageConsumerClient = new ActiveMQMessageConsumerClient(consumer_client_iD, input_FFQN,taskToRun, broker_ip, null,0,0);
+
+        return messageConsumerClient;
+    }
+
+    /*
+      /**
+       *  A helper method to build the Operator
+       * @param messageProducerClient
+       * @param operatorID
+       * @return
+
+    @Deprecated
+
+    private Operator createOperator(MessageProducerClient messageProducerClient, OperatorID operatorID, String inputType){
+
+        Operator operatorToRun = null;
+        //TODO: figure out how class loader works then replace this method with a generic one
+
+        if (inputType.equals("A")) {
+            operatorToRun = new OperatorTypeA(messageProducerClient, operatorID, inputType);
+        }
+
+        if (inputType.equals("B")) {
+            operatorToRun = new OperatorTypeB(messageProducerClient, operatorID, inputType);
+        }
+
+        return operatorToRun;
+
+    }
+    */
+
+    /**
+     * When operator code is delivered via an ActiveMQ ClientMessage, we need to deserialize the payload into an Operator object
+     * @param clientMessage
+     * @return
+     */
+    private Operator deserializeOperatorObject(ClientMessage clientMessage){
+
+        Operator operator = null;
+
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+
+        try {
+            clientMessage.saveToOutputStream(bos);
+
+        } catch (ActiveMQException e) {
+            e.printStackTrace();
+        }
+
+
+        ByteArrayInputStream bis = new ByteArrayInputStream(bos.toByteArray());
+        ObjectInput in = null;
+        try {
+            try {
+
+                in = new ObjectInputStream(bis);
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            try {
+                //convert object to a tuple
+                Object o = in.readObject();
+                operator = (Operator) o;
+
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        } finally {
+            try {
+                if (in != null) {
+                    in.close();
+                }
+            } catch (IOException ex) {
+                // ignore close exception
+            }
+        }
+        return operator;
+    }
+
+
+
+}

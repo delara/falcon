@@ -1,0 +1,54 @@
+package com.edgestream.worker.testing.Application;
+
+import com.edgestream.worker.common.Tuple;
+import com.edgestream.worker.io.MessageProducerClient;
+import com.edgestream.worker.operator.Operator;
+import com.edgestream.worker.operator.OperatorID;
+import com.edgestream.worker.operator.SingleTupleProcessing;
+
+
+public class OperatorTypeA extends Operator implements SingleTupleProcessing {
+
+
+
+    public OperatorTypeA(MessageProducerClient messageProducerClient, OperatorID operatorID, String inputType) {
+        super(messageProducerClient, operatorID,inputType);
+
+
+    }
+
+
+    public void emit(Tuple tupleToEmit)  {
+
+        getMessageProducerClient().onRequestToSend(tupleToEmit, timeStamp);
+
+    }
+
+    @Override
+    public void processElement(Object obj){
+
+        Tuple tuple = (Tuple)obj; // cast the object as a tuple type TODO: is this efficient to be casting?
+        processTuple(tuple);
+
+    }
+
+    @Override
+    public void processTuple(Tuple tuple) {
+
+        //System.out.println("Operator A - I got this tuple:" + tuple.getPayload());
+
+        Tuple t = new Tuple();
+        t.setPayload("Operator A: Sending a tuple of type B");
+        t.setType("B");
+        //System.out.println("Operator A: Sending a tuple of type B");
+
+
+        emit(t); //send the newly produced tuple
+
+
+    }
+
+
+
+
+}

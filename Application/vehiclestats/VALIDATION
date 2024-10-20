@@ -1,0 +1,8 @@
+Object Detection Producer
+	0 R tcp://0.0.0.0:61616 op1::o1 /home/aveith/projects/edgestream/Application/objectdetection/src/main/resources/dt/ TEST null 10
+	
+Object Detection Operator R
+	R tcp://0.0.0.0:61616 op1::o1 tcp://0.0.0.0:61616 op2::o2 TP_ETL_001 W001 tcp://0.0.0.0:61616 metrics::m1 OP_P_001 null null 7001 NONE B,8000 any,any| test mngt::mg null null NO_INITIAL_DEPLOYMENT null null null null
+
+Object Detection Operator C	
+	C tcp://0.0.0.0:61616 op2::o2 tcp://0.0.0.0:61616 op3::o3 TP_ETL_001 W001 tcp://0.0.0.0:61616 metrics::m1 OP_P_001 null null 7001 NONE B,8000 any,any| test mngt::mg

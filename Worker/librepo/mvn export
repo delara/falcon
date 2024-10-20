@@ -1,0 +1,4 @@
+mvn org.apache.maven.plugins:maven-install-plugin:2.5.2:install-file  \
+    -Dfile=/home/aveith/projects/edgestream/Worker/librepo/smartpath/pathstore/0.1.69/pathstore-0.1.69.jar \
+    -DgroupId=smartpath -DartifactId=pathstore \
+    -Dversion=0.1.69 -Dpackaging=jar

@@ -1,0 +1,12 @@
+package com.edgestream.testing.metrics;
+
+interface MetricsWriter {
+
+    //1. Create a queue to collect topology metrics
+    //2. Create a producer and bind that queue to this producer
+    //3. The framework can call this metrics writer
+
+
+    public void writeFileToSink(String fileName, String filePath);
+
+}

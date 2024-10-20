@@ -1,0 +1,231 @@
+package com.edgestream.worker.testing;
+
+
+import com.edgestream.worker.io.MessageConsumerClient;
+import com.edgestream.worker.operator.OperatorID;
+//import com.edgestream.worker.testing.Application.OperatorTypeA;
+//import com.edgestream.worker.testing.Application.OperatorTypeB;
+import com.edgestream.worker.io.artemis.ActiveMQMessageConsumerClient;
+import com.edgestream.worker.io.artemis.ActiveMQMessageProducerClient;
+import com.edgestream.worker.io.MessageProducerClient;
+import com.edgestream.worker.operator.Operator;
+import com.edgestream.worker.runtime.task.model.Task;
+import com.edgestream.worker.runtime.task.TaskDriver;
+import com.edgestream.worker.runtime.task.model.TaskRequestSetupOperator;
+import com.edgestream.worker.runtime.task.TaskRunnerLocal;
+import com.edgestream.worker.runtime.topology.Topology;
+
+
+public class TaskRequestProcessorOffline {
+
+
+    TaskRunnerLocal taskRunner;
+
+    public TaskRequestProcessorOffline(TaskRequestSetupOperator taskRequestSetupOperator, TaskDriver taskDriver) throws Exception {
+
+
+        //1. extract the details from the message
+        /**
+         * 1. Topology ID
+         * 2. Operator class name
+         * 3. Task created timestamp
+         * 4. Payload - starstream.operator class file or jar file
+         */
+        //get the jar from the file
+        //load the classes? or run the jar
+
+
+
+        String topologyID = taskRequestSetupOperator.getTopologyID();
+
+        String producer_client_iD = taskRequestSetupOperator.getProducer_client_iD();
+        String consumer_client_iD = taskRequestSetupOperator.getConsumer_client_iD();
+
+
+        String operatorID = taskRequestSetupOperator.getOperatorID();
+        String operatorType = taskRequestSetupOperator.getOperatorType();
+
+        String task_id = taskRequestSetupOperator.getTask_id();
+        String taskRunnerID = taskRequestSetupOperator.getTaskRunnerID();
+        String broker_ip = taskRequestSetupOperator.getBroker_ip();
+
+        /******Task construction begins here*****************************************************************/
+
+
+
+
+        /**Topology Setup **/
+        //check to see if topology already exists
+        boolean existingTopology = taskDriver.topologyAlreadyExists(topologyID);
+
+        Topology topologyForOperators;
+
+        if (!existingTopology) { //topology does not yet exist, we need to create it
+            topologyForOperators = new Topology(topologyID,taskDriver.getDefaultMetricsAddress());
+            taskDriver.addTopology(topologyForOperators);
+            taskDriver.getTaskBrokerConfig().addTopologyAddress(topologyForOperators);//sets up the PrimaryTopologyAddress address for this topology and the NoMatchTopologyAddress
+            taskDriver.getTaskBrokerConfig().setUpTopologyBridge(topologyForOperators);
+        }else{
+
+            topologyForOperators = taskDriver.getTopology(topologyID);
+
+        }
+
+
+
+        /**Operator Setup **/
+        /**buildOperator creates the starstream.operator object and its queue write. The consumer that feeds this starstream.operator is created after this step
+         * TODO: operator object will already be created so just need to update the values
+         * */
+        MessageProducerClient mpc = null;
+        Operator operatorToRun =  new Operator(mpc,new OperatorID(operatorID),operatorType);//test if this works
+
+        System.out.println("created dummy operator with out messaging client: " + operatorToRun.getInputType());
+
+        Operator operator = buildOperator(topologyForOperators.getPrimaryTopologyAddress(),producer_client_iD,new OperatorID(operatorID), broker_ip,operatorType);
+
+        /**Queue Setup **/
+        /** setupNewOperator() creates the input queues on the broker for this starstream.operator*/
+        String operatorConsumerQueueBinding = taskDriver.getTaskBrokerConfig().setupNewOperatorAndQueue(topologyForOperators,operator);
+
+        /**Task Setup **/
+        /** We build the task that contains the starstream.operator*/
+        Task task = buildTask(task_id,operator);
+
+
+        /**Consumer Client Setup **/
+        /** The consumer is asynchronous so it controls when the task->starstream.operator is invoked*/
+        MessageConsumerClient messageConsumerClient = buildMessageConsumerClient(consumer_client_iD,operatorConsumerQueueBinding,task, broker_ip);
+
+
+        /**Task Runner Setup **/
+        this.taskRunner = createTaskRunner(taskRequestSetupOperator,messageConsumerClient);
+
+
+        /**All done. Now add the taskRunner to the taskDriver so we can track this taskRunner and manage it later*/
+        taskDriver.addTaskRunner(this.taskRunner);
+
+
+    }
+
+    public void processTaskRequest(){
+
+        processTaskRequest(this.taskRunner);
+
+    }
+
+
+
+     private void processTaskRequest(TaskRunnerLocal taskRunner){
+
+         /**Start the task runner TODO: move the invocation method to the taskDriver so we can have better control of the task and monitor it*/
+         taskRunner.run();
+
+     }
+
+
+
+    /**
+     * A helper method to build the TaskRunner
+     * @param consumer
+     * @return
+     */
+    TaskRunnerLocal createTaskRunner(TaskRequestSetupOperator taskRequestSetupOperator, MessageConsumerClient consumer){
+
+        TaskRunnerLocal taskRunner = new TaskRunnerLocal(taskRequestSetupOperator,consumer);
+        return taskRunner;
+    }
+
+
+
+    /**
+     * A helper method to build the Task
+     * @param taskID
+     * @param operator
+     * @return
+     */
+    Task buildTask(String taskID, Operator operator){
+
+
+        Task task = new Task(taskID, operator);
+        return task;
+
+    }
+
+
+    /**
+     * A helper method to build the Operator object. This method also creates the MessageProducerClient object that the Operator will use to emit to the Primary Topology Address
+     * @param output_address
+     * @param producer_client_iD
+     * @param operatorID
+     * @return
+     */
+    Operator buildOperator(String output_address, String producer_client_iD, OperatorID operatorID, String broker_ip, String inputType) throws Exception {
+
+        MessageProducerClient messageProducerClient =  buildMessageProducerClient(output_address,producer_client_iD,broker_ip);
+
+        Operator  operatorToRun =  createOperator(messageProducerClient,operatorID,inputType);
+
+
+        return operatorToRun;
+    }
+
+
+    /**
+     * A helper method to build the Producer client
+     * @param output_FFQN
+     * @param producer_client_iD
+     * @return
+     */
+    MessageProducerClient buildMessageProducerClient(String output_FFQN, String producer_client_iD, String broker_ip) throws Exception {
+
+
+        MessageProducerClient messageProducerClient = new ActiveMQMessageProducerClient(producer_client_iD,output_FFQN,broker_ip, null,0,0, null);
+        return messageProducerClient;
+
+    }
+
+
+    /**
+     * A helper method to build the Consumer client
+     * @param consumer_client_iD
+     * @param input_FFQN
+     * @param taskToRun
+     * @return
+     * @throws Exception
+     */
+    MessageConsumerClient buildMessageConsumerClient(String consumer_client_iD, String input_FFQN, Task taskToRun, String broker_ip) throws Exception {
+
+        MessageConsumerClient messageConsumerClient = new ActiveMQMessageConsumerClient(consumer_client_iD, input_FFQN,taskToRun, broker_ip, null,0,0);
+
+        return messageConsumerClient;
+    }
+
+
+    /**
+     *  A helper method to build the Operator
+     * @param messageProducerClient
+     * @param operatorID
+     * @return
+     */
+    private Operator createOperator(MessageProducerClient messageProducerClient, OperatorID operatorID, String inputType){
+
+        Operator operatorToRun = null;
+        //TODO: figure out how class loader works then replace this method with a generic one
+
+        if (inputType.equals("A")) {
+            //operatorToRun = new OperatorTypeA(messageProducerClient, operatorID, inputType);
+        }
+
+        if (inputType.equals("B")) {
+            //operatorToRun = new OperatorTypeB(messageProducerClient, operatorID, inputType);
+        }
+
+        return operatorToRun;
+
+    }
+
+
+
+
+}

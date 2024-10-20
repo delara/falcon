@@ -1,0 +1,54 @@
+package com.edgestream.worker.testing;
+
+
+import com.edgestream.worker.runtime.task.TaskDriver;
+import com.edgestream.worker.runtime.task.model.TaskRequestSetupOperator;
+import org.apache.activemq.artemis.api.core.client.*;
+
+
+public class TaskListenerOffline implements Runnable  {
+
+
+    /*****************************************************************
+     * A client that is bound to a queue will get tasks and invoke them
+     *
+     *****************************************************************/
+
+
+    ClientConsumer consumer;
+    TaskDriver taskDriver;
+
+
+
+
+    public TaskListenerOffline(TaskDriver taskDriver) throws Exception {
+
+        this.taskDriver = taskDriver;
+    }
+
+
+
+    @Override
+    public void run() {
+
+        try {
+
+            System.out.println(" --------------------" + "Task listener is local, will use hardcoded configs for starstream.testing");
+            ClientMessage msgReceived = null;
+
+            TaskRequestSetupOperator taskRequestSetupOperatorA = new TaskRequestSetupOperatorDataA();
+            TaskRequestSetupOperator taskRequestSetupOperatorB = new TaskRequestSetupOperatorDataB();
+
+            TaskRequestProcessorOffline taskRequestProcessorOfflineA = new TaskRequestProcessorOffline(taskRequestSetupOperatorA,taskDriver); // when a task is received process it
+            taskRequestProcessorOfflineA.processTaskRequest();
+
+            TaskRequestProcessorOffline taskRequestProcessorOfflineB = new TaskRequestProcessorOffline(taskRequestSetupOperatorB,taskDriver); // when a task is received process it
+            taskRequestProcessorOfflineB.processTaskRequest();
+
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+}

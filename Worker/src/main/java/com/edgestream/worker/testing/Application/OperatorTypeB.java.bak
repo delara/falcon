@@ -1,0 +1,64 @@
+package com.edgestream.worker.testing.Application;
+
+import com.edgestream.worker.common.Tuple;
+import com.edgestream.worker.io.MessageProducerClient;
+import com.edgestream.worker.operator.Operator;
+import com.edgestream.worker.operator.OperatorID;
+import com.edgestream.worker.operator.SingleTupleProcessing;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+
+import java.io.IOException;
+
+public class OperatorTypeB extends Operator implements SingleTupleProcessing {
+
+
+
+    public OperatorTypeB(MessageProducerClient messageProducerClient, OperatorID operatorID, String inputType) {
+        super(messageProducerClient, operatorID,inputType);
+
+
+    }
+
+
+    public void emit(Tuple tupleToEmit) throws ActiveMQException, IOException {
+
+        getMessageProducerClient().onRequestToSend(tupleToEmit, timeStamp);
+
+    }
+
+    @Override
+    public void processElement(Object obj){
+
+        Tuple tuple = (Tuple)obj; // cast the object as a tuple type TODO: is this efficient to be casting?
+        processTuple(tuple);
+
+    }
+
+    @Override
+    public void processTuple(Tuple tuple) {
+        /*
+        //System.out.println("Operator B - I got this tuple:" + tuple.getPayload());
+
+        Tuple t = new Tuple();
+        t.setPayload("Operator B: Sending a tuple of type C");
+        t.setType("C");
+        //System.out.println("Operator B: Sending a tuple of type C");
+
+        try {
+
+            emit(t);
+
+        } catch (ActiveMQException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+
+       */
+    }
+
+
+
+
+}

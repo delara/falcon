@@ -1,0 +1,89 @@
+package com.edgestream.application.vehiclestats.operators;
+
+import com.edgestream.worker.common.Tuple;
+import com.edgestream.worker.metrics.metricscollector2.MetricsCollector3;
+import com.edgestream.worker.operator.OperatorID;
+import com.edgestream.worker.operator.StatefulOperator;
+import com.edgestream.worker.runtime.reconfiguration.state.AtomicKey;
+import com.edgestream.worker.storage.StateObject;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+public class StatsAggregatorIncrementalState extends StatefulOperator {
+    StateObject.HashMapObject4 vehicleStats;
+
+    public StatsAggregatorIncrementalState(OperatorID operatorID, String inputType, ArrayList<AtomicKey> routingKeys, String metrics_broker_IP_address, MetricsCollector3 metricsCollector) {
+        super(operatorID, inputType, routingKeys, metricsCollector);
+        vehicleStats = new StateObject.HashMapObject4(operatorID.getOperatorID_as_String(), metrics_broker_IP_address);
+    }
+
+    public Double stateUpdate(String vehicleId, Double vehicleSpeed) {
+        if (vehicleStats.containsKey(vehicleId)) {
+            ArrayList<Double> elements = vehicleStats.getKey(vehicleId);
+            elements.add(vehicleSpeed);
+            Double sum = 0.0;
+            for (Double element: elements) {
+                sum += element;
+            }
+            Double avg = sum / elements.size();
+            vehicleStats.putKey(vehicleId, elements);
+            return avg;
+        } else {
+            vehicleStats.putKey(vehicleId, new ArrayList<>(Arrays.asList(vehicleSpeed)));
+            return vehicleSpeed;
+        }
+    }
+
+//    public String convertHashMapToStringPayload() {
+//        String concatenatedResult = "";
+//        for (String key: vehicleStats.keySet()) {
+//            concatenatedResult = concatenatedResult + key + ":" + vehicleStats.get(key).toString() + ",";
+//        }
+//        return concatenatedResult;
+//    }
+
+    @Override
+    public void performRestore(ArrayList<AtomicKey> routingKeys) {
+        vehicleStats.restorePartitionKeys(routingKeys);
+        System.out.println("State after restore:" + vehicleStats.printContents());
+        restoreSize = vehicleStats.stateSize;
+    }
+
+    @Override
+    public void performOnDemandBackup(ArrayList<AtomicKey> routingKeys) {
+        //Perform backup operation for only keys to be routed.
+        System.out.println("State during on-demand backup:" + vehicleStats.printContents());
+        vehicleStats.checkStateChanges(routingKeys);
+        vehicleStats.pausePeriodicCheckpoint();
+        backupSize = vehicleStats.stateSize;
+    }
+
+    @Override
+    public boolean performCheckpoint() {
+        // return value checks if checkpoint actually did any data transfer
+        boolean dataTransferred = vehicleStats.checkStateChanges(null);
+        backupSize = vehicleStats.stateSize;
+        changedKeysSize = vehicleStats.changedKeysSize;
+        return dataTransferred;
+    }
+
+    @Override
+    public void processTuple(Tuple tuple, String tupleID, String tupleInternalID, String producerId, String timeStamp, String tupleOrigin, String inputKey) {
+//        System.out.println("Processing tuple");
+        String tupleData = new String(tuple.getPayloadAsByteArray());
+//        String tID = tupleData.split(",")[0];
+//        System.out.println("Processing tuple having id: " + tID);
+        String vehicleId = tupleData.split(",")[0];
+        Double vehicleSpeed = Double.parseDouble(tupleData.split(",")[1]);
+        Double avg = stateUpdate(vehicleId, vehicleSpeed);
+//        String stringPayload = vehicleStats.printContents();
+        tuple.setType("D");
+        tuple.setPayloadAsByteArray(avg.toString().getBytes());
+//        System.out.println("Vehicle stats string: " + stringPayload);
+        if (!isOperatorMigrating) {
+            emit(tuple, tupleID, tupleInternalID, producerId, timeStamp, tupleOrigin, inputKey);
+        }
+    }
+}
